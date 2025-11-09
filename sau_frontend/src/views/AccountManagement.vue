@@ -320,6 +320,69 @@
             </div>
           </div>
         </el-tab-pane>
+
+        <el-tab-pane label="TikTok" name="tiktok">
+          <div class="account-list-container">
+            <div class="account-search">
+              <el-input
+                v-model="searchKeyword"
+                placeholder="输入名称或账号搜索"
+                prefix-icon="Search"
+                clearable
+                @clear="handleSearch"
+                @input="handleSearch"
+              />
+              <div class="action-buttons">
+                <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
+                <el-button type="info" @click="fetchAccounts" :loading="false">
+                  <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
+                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                </el-button>
+              </div>
+            </div>
+
+            <div v-if="filteredTikTokAccounts.length > 0" class="account-list">
+              <el-table :data="filteredTikTokAccounts" style="width: 100%">
+                <el-table-column label="头像" width="80">
+                  <template #default="scope">
+                    <el-avatar :src="scope.row.avatar" :size="40" />
+                  </template>
+                </el-table-column>
+                <el-table-column prop="name" label="名称" width="180" />
+                <el-table-column prop="platform" label="平台">
+                  <template #default="scope">
+                    <el-tag
+                      :type="getPlatformTagType(scope.row.platform)"
+                      effect="plain"
+                    >
+                      {{ scope.row.platform }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="status" label="状态">
+                  <template #default="scope">
+                    <el-tag
+                      :type="scope.row.status === '正常' ? 'success' : 'danger'"
+                      effect="plain"
+                    >
+                      {{ scope.row.status }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作">
+                  <template #default="scope">
+                    <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+
+            <div v-else class="empty-data">
+              <el-empty description="暂无TikTok账号数据" />
+            </div>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </div>
     
@@ -344,6 +407,7 @@
             <el-option label="抖音" value="抖音" />
             <el-option label="视频号" value="视频号" />
             <el-option label="小红书" value="小红书" />
+            <el-option label="TikTok" value="TikTok" />
           </el-select>
         </el-form-item>
         <el-form-item label="名称" prop="name">
@@ -404,6 +468,15 @@ const accountStore = useAccountStore()
 // 获取应用状态管理
 const appStore = useAppStore()
 
+// 平台与类型编号映射，便于扩展
+const PLATFORM_TYPE_MAP = {
+  '小红书': '1',
+  '视频号': '2',
+  '抖音': '3',
+  '快手': '4',
+  'TikTok': '5'
+}
+
 // 当前激活的标签页
 const activeTab = ref('all')
 
@@ -450,7 +523,8 @@ const getPlatformTagType = (platform) => {
     '快手': 'success',
     '抖音': 'danger',
     '视频号': 'warning',
-    '小红书': 'info'
+    '小红书': 'info',
+    'TikTok': 'primary'
   }
   return typeMap[platform] || 'info'
 }
@@ -478,6 +552,10 @@ const filteredChannelsAccounts = computed(() => {
 
 const filteredXiaohongshuAccounts = computed(() => {
   return filteredAccounts.value.filter(account => account.platform === '小红书')
+})
+
+const filteredTikTokAccounts = computed(() => {
+  return filteredAccounts.value.filter(account => account.platform === 'TikTok')
 })
 
 // 搜索处理
@@ -588,16 +666,13 @@ const connectSSE = (platform, name) => {
   sseConnecting.value = true
   qrCodeData.value = ''
   loginStatus.value = ''
-  
-  // 获取平台类型编号
-  const platformTypeMap = {
-    '小红书': '1',
-    '视频号': '2',
-    '抖音': '3',
-    '快手': '4'
+
+  const type = PLATFORM_TYPE_MAP[platform]
+  if (!type) {
+    ElMessage.error('暂不支持该平台')
+    sseConnecting.value = false
+    return
   }
-  
-  const type = platformTypeMap[platform] || '1'
   
   // 创建SSE连接
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
@@ -689,10 +764,15 @@ const submitAccountForm = () => {
         connectSSE(accountForm.platform, accountForm.name)
       } else {
         // 编辑账号逻辑
+        const platformType = PLATFORM_TYPE_MAP[accountForm.platform]
+        if (!platformType) {
+          ElMessage.error('暂不支持该平台')
+          return
+        }
         try {
           const res = await accountApi.updateAccount({
             id: accountForm.id,
-            type: Number(accountForm.platform === '快手' ? 1 : accountForm.platform === '抖音' ? 2 : accountForm.platform === '视频号' ? 3 : 4),
+            type: Number(platformType),
             userName: accountForm.name
           })
           if (res.code === 200) {

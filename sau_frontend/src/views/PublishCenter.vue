@@ -539,6 +539,15 @@ const makeNewTab = () => {
   }
 }
 
+// copy basic publish content from an existing tab (videos/title/topics)
+const copyTabContent = (sourceTab, targetTab) => {
+  if (!sourceTab || !targetTab) return
+  targetTab.fileList = sourceTab.fileList.map(file => ({ ...file }))
+  targetTab.displayFileList = sourceTab.displayFileList.map(file => ({ ...file }))
+  targetTab.title = sourceTab.title
+  targetTab.selectedTopics = [...sourceTab.selectedTopics]
+}
+
 // tab页数据 - 默认只有一个tab (use deep copy to avoid shared refs)
 const tabs = reactive([
   makeNewTab()
@@ -579,6 +588,11 @@ const recommendedTopics = [
 const addTab = () => {
   tabCounter++
   const newTab = makeNewTab()
+  const tab1 = tabs.find(tab => tab.name === 'tab1') || tabs[0]
+  if (tab1) {
+    copyTabContent(tab1, newTab)
+    newTab.selectedPlatform = null
+  }
   newTab.name = `tab${tabCounter}`
   newTab.label = `发布${tabCounter}`
   tabs.push(newTab)

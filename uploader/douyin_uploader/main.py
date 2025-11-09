@@ -184,6 +184,8 @@ class DouYinVideo(object):
 
         for index, tag in enumerate(self.tags, start=1):
             await description_editor.type(f"#{tag} ")
+            await page.wait_for_timeout(200)  # brief pause to let Douyin suggestion panel settle
+        await page.wait_for_timeout(1000)  # ensure the editor syncs before proceeding
         douyin_logger.info(f'总共添加{len(self.tags)}个话题')
         while True:
             # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
