@@ -1,6 +1,8 @@
 import asyncio
 import configparser
 import os
+import re
+from pathlib import Path
 
 from playwright.async_api import async_playwright
 from xhs import XhsClient
@@ -8,7 +10,6 @@ from xhs import XhsClient
 from conf import BASE_DIR
 from utils.base_social_media import set_init_script
 from utils.log import tencent_logger, kuaishou_logger, douyin_logger
-from pathlib import Path
 from uploader.xhs_uploader.main import sign_local
 
 async def cookie_auth_douyin(account_file):
@@ -98,6 +99,30 @@ async def cookie_auth_xhs(account_file):
             print("[+] cookie 有效")
             return True
 
+async def cookie_auth_tiktok(account_file):
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        context = await browser.new_context(storage_state=account_file)
+        context = await set_init_script(context)
+        page = await context.new_page()
+        await page.goto("https://www.tiktok.com/tiktokstudio/upload?lang=en")
+        try:
+            await page.wait_for_load_state('networkidle')
+            select_elements = await page.query_selector_all('select')
+            for element in select_elements:
+                class_name = await element.get_attribute('class') or ''
+                if re.match(r'tiktok-.*-SelectFormContainer.*', class_name):
+                    print("[+] TikTok cookie 失效")
+                    return False
+            print("[+] TikTok cookie 有效")
+            return True
+        except Exception as exc:
+            print("[+] TikTok cookie 校验异常:", exc)
+            return False
+        finally:
+            await context.close()
+            await browser.close()
+
 
 async def check_cookie(type,file_path):
     match type:
@@ -113,6 +138,9 @@ async def check_cookie(type,file_path):
         # 快手
         case 4:
             return await cookie_auth_ks(Path(BASE_DIR / "cookiesFile" / file_path))
+        # TikTok
+        case 5:
+            return await cookie_auth_tiktok(Path(BASE_DIR / "cookiesFile" / file_path))
         case _:
             return False
 
