@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
 
-from playwright.async_api import Playwright, async_playwright, Page
+from playwright.async_api import Playwright, async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 import os
 import asyncio
 
@@ -163,8 +163,13 @@ class XiaoHongShuVideo(object):
         # 这里为了避免页面变化，故使用相对位置定位：作品标题父级右侧第一个元素的input子元素
         await asyncio.sleep(1)
         xiaohongshu_logger.info(f'  [-] 正在填充标题和话题...')
-        title_container = page.locator('div.plugin.title-container').locator('input.d-text')
-        if await title_container.count():
+        title_selectors = [
+            "div.plugin.title-container input.d-text",
+            "input.d-text[placeholder*='填写标题']",
+            "input[placeholder*='填写标题']",
+        ]
+        title_container = await self.locate_first_visible(page, title_selectors, timeout=15000)
+        if title_container:
             await title_container.fill(self.title[:30])
         else:
             titlecontainer = page.locator(".notranslate")
@@ -174,11 +179,31 @@ class XiaoHongShuVideo(object):
             await page.keyboard.press("Delete")
             await page.keyboard.type(self.title)
             await page.keyboard.press("Enter")
-        css_selector = ".ql-editor" # 不能加上 .ql-blank 属性，这样只能获取第一次非空状态
-        for index, tag in enumerate(self.tags, start=1):
-            await page.type(css_selector, "#" + tag)
-            await page.press(css_selector, "Space")
-        xiaohongshu_logger.info(f'总共添加{len(self.tags)}个话题')
+        if self.tags:
+            tag_editor_selectors = [
+                ".ql-editor",  # 旧版编辑器
+                "[contenteditable='true'][data-placeholder*='话题']",
+                "[contenteditable='true'][data-placeholder*='话题内容']",
+                "[contenteditable='true'][data-placeholder*='正文']",
+                ".tiptap.ProseMirror[contenteditable='true']",
+                "[contenteditable='true'].ProseMirror",
+                "div.tiptap-container [contenteditable='true']",
+                "div[class*='topic'] [contenteditable='true']",
+            ]
+            editor_locator = await self.locate_first_visible(page, tag_editor_selectors, timeout=15000)
+            if editor_locator is None:
+                raise RuntimeError("未找到小红书话题输入框，请检查页面结构是否发生变化。")
+
+            await editor_locator.click()
+            try:
+                await editor_locator.press("Control+KeyA")
+                await editor_locator.press("Delete")
+            except Exception:
+                pass
+            for index, tag in enumerate(self.tags, start=1):
+                await editor_locator.type("#" + tag)
+                await editor_locator.press("Space")
+            xiaohongshu_logger.info(f'总共添加{len(self.tags)}个话题')
 
         # while True:
         #     # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
@@ -221,12 +246,23 @@ class XiaoHongShuVideo(object):
             try:
                 # 等待包含"定时发布"文本的button元素出现并点击
                 if self.publish_date != 0:
-                    await page.locator('button:has-text("定时发布")').click()
+                    publish_selectors = [
+                        "button:has-text(\"定时发布\")",
+                        "button.d-button:has-text(\"定时发布\")",
+                    ]
                 else:
-                    await page.locator('button:has-text("发布")').click()
+                    publish_selectors = [
+                        "button.publishBtn",
+                        "button.d-button:has-text(\"发布\")",
+                        "button:has-text(\"发布\")",
+                    ]
+                publish_button = await self.locate_first_visible(page, publish_selectors, timeout=15000)
+                if publish_button is None:
+                    raise RuntimeError("未找到发布按钮，请检查页面结构是否发生变化。")
+                await publish_button.click()
                 await page.wait_for_url(
                     "https://creator.xiaohongshu.com/publish/success?**",
-                    timeout=3000
+                    timeout=10000
                 )  # 如果自动跳转到作品页面，则代表发布成功
                 xiaohongshu_logger.success("  [-]视频发布成功")
                 break
@@ -359,6 +395,21 @@ class XiaoHongShuVideo(object):
             # 截图保存（取消注释使用）
             # await page.screenshot(path=f"location_error_{location}.png")
             return False
+
+    async def locate_first_visible(self, page: Page, selectors, timeout=5000):
+        """
+        Try selectors sequentially and return the first visible locator.
+        """
+        for selector in selectors:
+            locator = page.locator(selector).first
+            if not await locator.count():
+                continue
+            try:
+                await locator.wait_for(state="visible", timeout=timeout)
+                return locator
+            except PlaywrightTimeoutError:
+                continue
+        return None
 
     async def main(self):
         async with async_playwright() as playwright:
