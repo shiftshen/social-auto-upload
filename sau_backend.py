@@ -10,6 +10,7 @@ from flask_cors import CORS
 from myUtils.auth import check_cookie
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
+from myUtils.ai_client import AIServiceError, generate_ai_content
 from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen, tiktok_cookie_gen
 from myUtils.postVideo import post_video_tencent, post_video_DouYin, post_video_ks, post_video_xhs, post_video_tiktok
 
@@ -142,6 +143,44 @@ def upload_save():
         return jsonify({
             "code": 500,
             "msg": str("upload failed!"),
+            "data": None
+        }), 500
+
+
+@app.route('/ai/generate', methods=['POST'])
+def ai_generate():
+    request_body = request.get_json(silent=True) or {}
+    targets = request_body.get('targets', [])
+    context = request_body.get('context', {})
+
+    if not isinstance(targets, list):
+        return jsonify({
+            "code": 400,
+            "msg": "targets 需要是列表",
+            "data": None
+        }), 400
+
+    if context is None or not isinstance(context, dict):
+        context = {}
+
+    try:
+        result = generate_ai_content(targets, context)
+        return jsonify({
+            "code": 200,
+            "msg": "success",
+            "data": result
+        }), 200
+    except AIServiceError as exc:
+        return jsonify({
+            "code": 400,
+            "msg": str(exc),
+            "data": None
+        }), 400
+    except Exception as exc:
+        app.logger.exception("AI generation failed")
+        return jsonify({
+            "code": 500,
+            "msg": "AI生成失败，请稍后重试",
             "data": None
         }), 500
 

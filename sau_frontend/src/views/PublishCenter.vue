@@ -298,7 +298,19 @@
 
           <!-- 标题输入 -->
           <div class="title-section">
-            <h3>标题</h3>
+            <div class="section-header">
+              <h3>标题</h3>
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                class="ai-generate-btn"
+                :loading="tab.aiTitleLoading"
+                @click="requestAiTitle(tab)"
+              >
+                AI生成
+              </el-button>
+            </div>
             <el-input
               v-model="tab.title"
               type="textarea"
@@ -312,7 +324,19 @@
 
           <!-- 话题输入 -->
           <div class="topic-section">
-            <h3>话题</h3>
+            <div class="section-header">
+              <h3>话题</h3>
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                class="ai-generate-btn"
+                :loading="tab.aiTopicLoading"
+                @click="requestAiTopics(tab)"
+              >
+                AI生成
+              </el-button>
+            </div>
             <div class="topic-display">
               <div class="selected-topics">
                 <el-tag
@@ -472,6 +496,7 @@ import { ElMessage } from 'element-plus'
 import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
 import { materialApi } from '@/api/material'
+import { aiApi } from '@/api/ai'
 
 // API base URL
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
@@ -512,6 +537,11 @@ const platforms = [
   { key: 5, name: 'TikTok' }
 ]
 
+const platformNameMap = platforms.reduce((acc, platform) => {
+  acc[platform.key] = platform.name
+  return acc
+}, {})
+
 const defaultTabInit = {
   name: 'tab1',
   label: '发布1',
@@ -527,7 +557,9 @@ const defaultTabInit = {
   videosPerDay: 1, // 每天发布视频数量
   dailyTimes: ['10:00'], // 每天发布时间点列表
   startDays: 0, // 从今天开始计算的发布天数，0表示明天，1表示后天
-  publishStatus: null // 发布状态，包含message和type
+  publishStatus: null, // 发布状态，包含message和type
+  aiTitleLoading: false,
+  aiTopicLoading: false
 }
 
 // helper to create a fresh deep-copied tab from defaultTabInit
@@ -585,6 +617,103 @@ const recommendedTopics = [
   '科技', '生活', '娱乐', '体育', '教育', '艺术',
   '健康', '时尚', '美妆', '摄影', '宠物', '汽车'
 ]
+
+const aiTargetLoadingMap = {
+  title: 'aiTitleLoading',
+  topics: 'aiTopicLoading'
+}
+
+const normalizeString = (value) => typeof value === 'string' ? value.trim() : ''
+
+const buildAiContext = (tab) => {
+  const safeTab = tab || {}
+  const files = Array.isArray(safeTab.fileList) ? safeTab.fileList : []
+  const fileNames = files
+    .map(file => file?.name || file?.filename || (file?.path ? file.path.split('/').pop() : ''))
+    .filter(Boolean)
+
+  return {
+    platformId: safeTab.selectedPlatform,
+    platformName: platformNameMap[safeTab.selectedPlatform] || '',
+    productTitle: normalizeString(safeTab.productTitle),
+    productLink: normalizeString(safeTab.productLink),
+    existingTitle: normalizeString(safeTab.title),
+    existingTopics: Array.isArray(safeTab.selectedTopics) ? [...safeTab.selectedTopics] : [],
+    fileNames
+  }
+}
+
+const hasAiContext = (context) => {
+  if (!context) return false
+  if (context.existingTitle) return true
+  if (context.productTitle) return true
+  if (context.productLink) return true
+  if (Array.isArray(context.existingTopics) && context.existingTopics.length > 0) return true
+  if (Array.isArray(context.fileNames) && context.fileNames.length > 0) return true
+  return false
+}
+
+const triggerAiGeneration = async (tab, targets) => {
+  if (!tab) {
+    ElMessage.warning('请先选择一个发布Tab')
+    return
+  }
+
+  const normalizedTargets = (targets || []).filter(target => ['title', 'topics'].includes(target))
+  if (normalizedTargets.length === 0) {
+    return
+  }
+
+  const context = buildAiContext(tab)
+  if (!hasAiContext(context)) {
+    ElMessage.warning('请先填写标题草稿、商品信息或上传素材，以便AI生成内容')
+    return
+  }
+
+  const loadingKeys = normalizedTargets
+    .map(target => aiTargetLoadingMap[target])
+    .filter(Boolean)
+
+  loadingKeys.forEach(key => {
+    tab[key] = true
+  })
+
+  try {
+    const response = await aiApi.generate({
+      targets: normalizedTargets,
+      context
+    })
+
+    const generated = response.data || {}
+    let updated = false
+
+    if (normalizedTargets.includes('title') && generated.title) {
+      tab.title = generated.title
+      updated = true
+    }
+
+    if (normalizedTargets.includes('topics') && Array.isArray(generated.topics)) {
+      tab.selectedTopics = [...generated.topics]
+      updated = true
+    }
+
+    if (updated) {
+      ElMessage.success('AI生成完成')
+    } else {
+      ElMessage.warning('AI未返回有效内容')
+    }
+  } catch (error) {
+    console.error('AI生成失败:', error)
+    ElMessage.error(error?.message || 'AI生成失败，请稍后重试')
+  } finally {
+    loadingKeys.forEach(key => {
+      tab[key] = false
+    })
+  }
+}
+
+const requestAiTitle = (tab) => triggerAiGeneration(tab, ['title'])
+const requestAiTopics = (tab) => triggerAiGeneration(tab, ['topics'])
 
 // 添加新tab
 const addTab = () => {
@@ -814,6 +943,8 @@ const confirmPublish = async (tab) => {
         tab.selectedTopics = []
         tab.selectedAccounts = []
         tab.scheduleEnabled = false
+        tab.aiTitleLoading = false
+        tab.aiTopicLoading = false
         resolve()
       } else {
         tab.publishStatus = {
@@ -1166,6 +1297,22 @@ const batchPublish = async () => {
           font-weight: 500;
           color: $text-primary;
           margin: 0 0 10px 0;
+        }
+
+        .section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+
+          h3 {
+            margin: 0;
+          }
+
+          .ai-generate-btn {
+            flex-shrink: 0;
+          }
         }
         
         .upload-section,
